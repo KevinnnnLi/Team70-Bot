@@ -1,0 +1,4 @@
+utc_time,btc_ret_30d,eth_ret_30d,target,equity,peak_equity,halted,order_sent,note
+2026-10-05T12:33:33Z,0.08298931983808933,0.1078873687170645,long_eth,99899.485,100000.0,False,True,rebalanced to long_eth (buy ETH)
+2026-10-05T12:38:37Z,0.08298931983808933,0.1078873687170645,long_eth,99819.6724,100000.0,False,False,no order: today's decision is already handled
+2026-10-05T12:43:39Z,0.08298931983808933,0.1078873687170645,long_eth,99812.68419999999,100000.0,False,False,no order: today's decision is already handled

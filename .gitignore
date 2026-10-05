@@ -1,0 +1,23 @@
+# Secrets: never commit these
+env.sh
+.env
+*.key
+*.pem
+
+# Runtime state (contains the last decision, peak equity, and halt flag)
+state.json
+state.json.bak
+state.json.tmp
+
+# The three CSVs are tracked on purpose: they are the evidence that the bot
+# traded autonomously and are what Screen 1 asks for. Only the human log,
+# which duplicates them and grows fastest, is ignored.
+logs/bot.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/

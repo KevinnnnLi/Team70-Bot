@@ -1,0 +1,6 @@
+# Keep shell scripts and Python runnable on the Linux instance after cloning.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.csv text eol=lf

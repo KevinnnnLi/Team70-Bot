@@ -138,6 +138,40 @@ class SigningTests(unittest.TestCase):
             data, {"pair": "BTC/USD", "timestamp": str(NOW)}
         )
 
+    def test_cancel_order_uses_order_id_not_id(self):
+        """The official docs name the parameter order_id."""
+        client, transport, _ = make_client([server_time(), body({"Success": True})])
+        client.cancel_order(999)
+        _, url, data, headers = transport.calls[1]
+        self.assertEqual(url, f"{BASE_URL}/v3/cancel_order")
+        self.assertEqual(
+            data, {"order_id": "999", "timestamp": str(NOW)}
+        )
+        self.assertNotIn("id", data)
+        self.assertEqual(
+            headers["MSG-SIGNATURE"], signing.sign("topsecret", data)
+        )
+
+    def test_market_sell_signs_the_same_parameters_with_side_sell(self):
+        client, transport, _ = make_client([server_time(), body({"Success": True})])
+        client.place_order(
+            "ETH/USD", "SELL", Decimal("18.0000"), amount_precision=4
+        )
+        _, url, data, headers = transport.calls[1]
+        self.assertEqual(
+            data,
+            {
+                "pair": "ETH/USD",
+                "side": "SELL",
+                "type": "MARKET",
+                "quantity": "18.0000",
+                "timestamp": str(NOW),
+            },
+        )
+        self.assertEqual(
+            headers["MSG-SIGNATURE"], signing.sign("topsecret", data)
+        )
+
     def test_ticker_is_unsigned_but_still_carries_a_timestamp(self):
         client, transport, _ = make_client(
             [
@@ -403,6 +437,30 @@ class ParsingTests(unittest.TestCase):
             ]
         )
         self.assertEqual(client.ticker("ETH/USD").last_price, 2.0)
+
+    def test_ticker_with_a_non_positive_price_is_an_error(self):
+        client, _, _ = make_client(
+            [
+                body(
+                    {
+                        "Success": True,
+                        "Data": {"BTC/USD": {"LastPrice": 0}},
+                    }
+                )
+            ]
+        )
+        with self.assertRaises(TransportError):
+            client.ticker("BTC/USD")
+
+    def test_balance_with_an_unrecognised_shape_is_an_error(self):
+        client, _, _ = make_client(
+            [
+                server_time(),
+                body({"Success": True, "SomethingElse": {"a": 1}}),
+            ]
+        )
+        with self.assertRaises(TransportError):
+            client.balance()
 
     def test_short_positions_empty_list(self):
         client, _, _ = make_client(

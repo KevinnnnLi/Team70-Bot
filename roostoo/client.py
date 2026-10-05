@@ -186,6 +186,10 @@ class RoostooClient:
     def balance(self) -> Balance:
         body = self._request("GET", "/v3/balance", signed=True)
         container = _extract_wallets(body)
+        if not container:
+            raise TransportError(
+                f"/v3/balance did not contain a wallet map: {body}"
+            )
         wallets = {
             coin: Wallet.from_api(entry)
             for coin, entry in container.items()
@@ -202,17 +206,28 @@ class RoostooClient:
             signed=False,
         )
         data = body.get("Data")
+        entry = None
         if isinstance(data, dict):
-            entry = data.get(pair)
-            if not isinstance(entry, dict) and "LastPrice" in data:
-                entry = data
-            if isinstance(entry, dict):
-                return Ticker.from_api(pair, entry)
-        if isinstance(data, list):
+            candidate = data.get(pair)
+            if not isinstance(candidate, dict) and "LastPrice" in data:
+                candidate = data
+            if isinstance(candidate, dict):
+                entry = candidate
+        elif isinstance(data, list):
             for row in data:
                 if isinstance(row, dict) and str(row.get("Pair")) == pair:
-                    return Ticker.from_api(pair, row)
-        raise TransportError(f"/v3/ticker did not include {pair}: {body}")
+                    entry = row
+                    break
+        if entry is None:
+            raise TransportError(f"/v3/ticker did not include {pair}: {body}")
+        ticker = Ticker.from_api(pair, entry)
+        if ticker.last_price <= 0:
+            # A missing or zero price must never be used for sizing or for
+            # deciding whether we hold a position.
+            raise TransportError(
+                f"/v3/ticker returned a non-positive LastPrice for {pair}: {body}"
+            )
+        return ticker
 
     def short_positions(self) -> list[ShortPosition]:
         body = self._request("GET", "/v6/short_positions", signed=True)
@@ -247,8 +262,10 @@ class RoostooClient:
         )
 
     def cancel_order(self, order_id: Any) -> dict:
+        # The official docs name this parameter order_id; the demo signs
+        # {'order_id': <id>} plus timestamp.
         return self._request(
-            "POST", "/v3/cancel_order", params={"id": order_id}, signed=True
+            "POST", "/v3/cancel_order", params={"order_id": order_id}, signed=True
         )
 
     def short_open(self, pair: str, collateral: Decimal) -> dict:

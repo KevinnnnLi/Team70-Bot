@@ -72,6 +72,18 @@ class EngineTestCase(unittest.TestCase):
 
 
 class DecisionTests(EngineTestCase):
+    def test_rebalance_sells_the_old_coin_before_buying_the_new_one(self):
+        client = FakeClient(usd_free=0.0, eth=18.0)  # 36,000 USD of ETH
+        engine = self.build(client, signal(0.10, 0.01))  # BTC now leads
+        engine.run_once()
+
+        self.assertEqual(
+            [(order[0], order[1]) for order in client.orders],
+            [("ETH/USD", "SELL"), ("BTC/USD", "BUY")],
+        )
+        self.assertEqual(client.coins["ETH"], 0.0)
+        self.assertGreater(client.coins["BTC"], 0.0)
+
     def test_flat_account_buys_the_signal_winner(self):
         client = FakeClient(usd_free=100_000.0)
         engine = self.build(client, signal(0.049, 0.068))
@@ -202,7 +214,52 @@ class ShortTests(EngineTestCase):
         engine.run_once()
         self.assertEqual(len(client.orders), 1)
         self.assertEqual(client.orders[0][1], "SHORT_OPEN")
-        self.assertEqual(self.store.load().decision_target, "short_btc")
+        state = self.store.load()
+        self.assertEqual(state.decision_target, "short_btc")
+        self.assertTrue(state.decision_complete)
+
+    def test_short_open_without_an_open_status_is_not_trusted(self):
+        """Success: true but no Status: OPEN means unconfirmed, so retry."""
+        client = FakeClient()
+        client.short_open = lambda pair, collateral: {"Success": True}
+        engine = self.build(client, signal(-0.01, -0.02))
+        engine.run_once()
+        self.assertFalse(self.store.load().decision_complete)
+
+    def test_unconfirmed_short_is_confirmed_by_position_not_stacked(self):
+        client = FakeClient()
+        client.short_open = lambda pair, collateral: {"Success": True}
+        engine = self.build(client, signal(-0.01, -0.02))
+        engine.run_once()
+        self.assertFalse(self.store.load().decision_complete)
+
+        # It did fill after all. The next loop must see the position and stop,
+        # not open a second short.
+        client.shorts = [
+            ShortPosition(pair="BTC/USD", short_qty=1.0, collateral=50_000.0)
+        ]
+        client.orders = []
+        engine.run_once()
+
+        self.assertTrue(self.store.load().decision_complete)
+        self.assertEqual(client.orders, [])
+
+    def test_pending_short_is_cancelled_and_retried(self):
+        client = FakeClient()
+        cancelled = []
+        client.short_open = lambda pair, collateral: {
+            "Success": True,
+            "Status": "PENDING",
+            "ID": 999,
+        }
+        client.cancel_order = lambda order_id: (
+            cancelled.append(order_id) or {"Success": True}
+        )
+        engine = self.build(client, signal(-0.01, -0.02))
+        engine.run_once()
+
+        self.assertEqual(cancelled, [999])
+        self.assertFalse(self.store.load().decision_complete)
 
     def test_short_not_allowed_is_logged_and_not_retried(self):
         client = FakeClient(short_not_allowed=True)
@@ -232,6 +289,23 @@ class ShortTests(EngineTestCase):
 
 
 class HaltTests(EngineTestCase):
+    def test_zero_equity_reading_never_trips_the_halt(self):
+        """A bad read must not permanently halt the account."""
+        client = FakeClient(usd_free=0.0)
+        engine = self.build(client, signal(0.049, 0.068))
+        engine.run_once()
+
+        state = self.store.load()
+        self.assertFalse(state.halted, "0 equity is bad data, not a 100% loss")
+        self.assertEqual(client.orders, [])
+
+    def test_zero_equity_reading_does_not_trade(self):
+        client = FakeClient(usd_free=0.0)
+        engine = self.build(client, signal(0.049, 0.068))
+        engine.run_once()
+        self.assertEqual(client.orders, [])
+        self.assertIsNone(self.store.load().last_decision_date)
+
     def test_twenty_percent_drawdown_flattens_and_halts(self):
         client = FakeClient(usd_free=0.0, eth=39.5)  # 79,000 USD at 2,000
         self.store.save(

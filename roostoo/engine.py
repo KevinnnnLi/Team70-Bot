@@ -69,6 +69,26 @@ class Engine:
         exchange = self._client.exchange_info()
 
         equity, balance, tickers, shorts = self._mark()
+        if equity <= 0:
+            # Equity can only be zero if the account is empty or a response
+            # was misread. Either way it is not a 100% loss, and treating it
+            # as one would trip the drawdown halt permanently.
+            self._logger.error(
+                "equity marked at %.2f; treating it as a bad reading and "
+                "skipping this loop",
+                equity,
+            )
+            self._record(
+                now,
+                state,
+                equity,
+                balance,
+                shorts,
+                target="",
+                order_sent=False,
+                note="skipped: equity <= 0, treating the reading as bad data",
+            )
+            return
         state.peak_equity = max(state.peak_equity, equity)
 
         halt_level = state.peak_equity * (1.0 - self._config.max_drawdown)
@@ -310,10 +330,24 @@ class Engine:
                 collateral,
                 lambda: self._client.short_open(pair, collateral),
             )
-            if result.ok:
-                status = str(result.row.get("_status", "")).upper()
-                if status and status != "OPEN":
-                    return self._cancel_pending(pair, result, status)
+            if not result.ok:
+                return result
+            status = str(result.row.get("_status", "")).upper()
+            if status == "OPEN":
+                return result
+            if status == "PENDING":
+                # A limit order we never intended to leave open.
+                return self._cancel_pending(pair, result, status)
+            # Success on its own is not proof the short exists, so treat it
+            # as unconfirmed and retry. If it did fill, the live position
+            # check on the next loop stops us opening a second one.
+            result.ok = False
+            result.retryable = True
+            result.note = (
+                f"short_open returned no OPEN status (got {status or 'none'}); "
+                "will confirm the position on the next loop"
+            )
+            result.row["err_msg"] = result.note
             return result
 
         if action.kind == "short_close":

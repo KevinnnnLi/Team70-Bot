@@ -119,3 +119,8 @@ class FakeClient:
                 self.usd_free += position.collateral + position.unrealized_pnl
         self.orders.append((pair, "SHORT_CLOSE", ""))
         return {"Success": True, "FullyClosed": True}
+
+    def cancel_order(self, order_id):
+        self.attempts.append(("cancel_order", order_id))
+        self.orders.append(("CANCEL", str(order_id), ""))
+        return {"Success": True}
